@@ -1,0 +1,24 @@
+{
+  "name": "robertripoll/whatsapp-webhook",
+  "description": "WhatsApp Cloud API Webhook",
+  "require": {
+	"robertripoll/whatsapp-cloud-api": "dev-main",
+	"symfony/event-dispatcher": "^5",
+	"illuminate/collections": "^8",
+	"ext-json": "*"
+  },
+  "repositories": [
+	{
+	  "type": "package",
+	  "package": {
+		"name": "robertripoll/whatsapp-cloud-api",
+		"version": "dev-main",
+		"source": {
+		  "url": "https://github.com/robertripoll/whatsapp-cloud-api",
+		  "type": "git",
+		  "reference": "origin/main"
+		}
+	  }
+	}
+  ]
+}
