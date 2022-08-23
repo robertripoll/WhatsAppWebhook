@@ -4,11 +4,13 @@ namespace RobertRipoll;
 
 use Illuminate\Support\Collection;
 use InvalidArgumentException;
+use Netflie\WhatsAppCloudApi\Message\Template\Component;
 use Netflie\WhatsAppCloudApi\Response;
 use Netflie\WhatsAppCloudApi\Response\ResponseException;
 use Netflie\WhatsAppCloudApi\WhatsAppCloudApi;
 use RobertRipoll\Entities\Message;
 use RobertRipoll\Entities\Sender;
+use RobertRipoll\Entities\Template;
 use RobertRipoll\Entities\TextMessage;
 use RobertRipoll\Entities\User;
 use RobertRipoll\Events\Event;
@@ -181,6 +183,19 @@ class WhatsAppWebhook
 		return $this->whatsApp->sendTextMessage($recipient->getPhoneNumber(), $message->getText());
 	}
 
+	private function sendTemplate(User $recipient, Template $template): Response
+	{
+		if ($template->hasComponents()) {
+			$netflieComponent = new Component([], $template->getComponents()->toArray(), []);
+		}
+
+		else {
+			$netflieComponent = null;
+		}
+
+		return $this->whatsApp->sendTemplate($recipient->getPhoneNumber(), $template->getName(), $template->getLanguage(), $netflieComponent);
+	}
+
 	/**
 	 * @throws ResponseException
 	 */
@@ -188,6 +203,10 @@ class WhatsAppWebhook
 	{
 		if ($message instanceof TextMessage) {
 			$response = $this->sendTextMessage($recipient, $message);
+		}
+
+		elseif ($message instanceof Template) {
+			$response = $this->sendTemplate($recipient, $message);
 		}
 
 		else {
