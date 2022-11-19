@@ -129,7 +129,7 @@ class WhatsAppWebhook
 			$message = new TextMessage($body, '', $sender);
 		}
 
-		elseif ($message == ButtonMessage::getType())
+		elseif ($messageType == ButtonMessage::getType())
 		{
 			$button = new Collection($data->get($messageType));
 			$message = new ButtonMessage($button->get('text'), $button->get('payload'), '', $sender);
