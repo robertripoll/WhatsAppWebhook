@@ -2,22 +2,22 @@
 
 namespace RobertRipoll\Entities;
 
-class TextMessage extends Message
+final class TextMessage extends Message
 {
-	private string $text;
+	private string $message;
 
-	public function __construct(string $text, ?string $id = null)
+	public function __construct(string $message, string $id, Sender $sender)
 	{
-		parent::__construct($id);
-		$this->text = $text;
+		$this->message = $message;
+		parent::__construct($id, $sender);
 	}
 
-	public function getText() : string
+	public function getMessage(): string
 	{
-		return $this->text;
+		return $this->message;
 	}
 
-	public static function getType() : string
+	public static function getType(): string
 	{
 		return 'text';
 	}

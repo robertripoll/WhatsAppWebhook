@@ -2,9 +2,9 @@
 
 namespace RobertRipoll\Entities;
 
-class Sender extends User
+final class Sender extends User
 {
-	protected string $username;
+	private string $username;
 
 	public function __construct(string $id, string $phoneNumber, string $username)
 	{

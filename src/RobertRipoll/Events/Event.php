@@ -3,27 +3,18 @@
 namespace RobertRipoll\Events;
 
 use DateTime;
-use RobertRipoll\WhatsAppWebhook;
-use Symfony\Contracts\EventDispatcher\Event as SymfonyEvent;
 
-abstract class Event extends SymfonyEvent
+abstract class Event
 {
-	private WhatsAppWebhook $chatBot;
-	private DateTime $timestamp;
+	private DateTime $dateTime;
 
-	public function __construct(WhatsAppWebhook $chatBot, ?DateTime $timestamp = null)
+	public function __construct(?DateTime $dateTime = null)
 	{
-		$this->chatBot = $chatBot;
-		$this->timestamp = $timestamp ?: new DateTime();
+		$this->dateTime = $dateTime ?: new DateTime();
 	}
 
-	public final function getChatBot(): WhatsAppWebhook
+	public final function getDateTime(): DateTime
 	{
-		return $this->chatBot;
-	}
-
-	public final function getTimestamp(): DateTime
-	{
-		return $this->timestamp;
+		return $this->dateTime;
 	}
 }

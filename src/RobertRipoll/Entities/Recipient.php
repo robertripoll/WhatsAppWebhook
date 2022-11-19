@@ -2,4 +2,4 @@
 
 namespace RobertRipoll\Entities;
 
-class Recipient extends User { }
+final class Recipient extends User {}

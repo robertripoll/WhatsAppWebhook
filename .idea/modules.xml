@@ -2,7 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/.idea/WhatsAppChatBot.iml" filepath="$PROJECT_DIR$/.idea/WhatsAppChatBot.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/WhatsAppWebhook.iml" filepath="$PROJECT_DIR$/.idea/WhatsAppWebhook.iml" />
     </modules>
   </component>
 </project>

@@ -2,6 +2,4 @@
 
 namespace RobertRipoll\Events;
 
-class MessageReadEvent extends Event
-{
-}
+final class MessageReadEvent extends MessageStatusChangedEvent {}

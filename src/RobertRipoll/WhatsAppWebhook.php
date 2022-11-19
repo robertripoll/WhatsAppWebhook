@@ -2,219 +2,208 @@
 
 namespace RobertRipoll;
 
+use DateTime;
 use Illuminate\Support\Collection;
-use InvalidArgumentException;
-use Netflie\WhatsAppCloudApi\Message\Template\Component;
-use Netflie\WhatsAppCloudApi\Response;
-use Netflie\WhatsAppCloudApi\Response\ResponseException;
 use Netflie\WhatsAppCloudApi\WhatsAppCloudApi;
+use Psr\EventDispatcher\EventDispatcherInterface;
+use Psr\Http\Message\RequestInterface;
+use RobertRipoll\Entities\ButtonMessage;
 use RobertRipoll\Entities\Message;
 use RobertRipoll\Entities\Sender;
-use RobertRipoll\Entities\Template;
 use RobertRipoll\Entities\TextMessage;
-use RobertRipoll\Entities\User;
-use RobertRipoll\Events\Event;
+use RobertRipoll\Events\ButtonMessageReceivedEvent;
 use RobertRipoll\Events\MessageDeliveredEvent;
 use RobertRipoll\Events\MessageReadEvent;
+use RobertRipoll\Events\MessageSentEvent;
 use RobertRipoll\Events\TextMessageReceivedEvent;
-use Symfony\Component\EventDispatcher\EventDispatcher;
-use Symfony\Component\EventDispatcher\EventDispatcherInterface;
+use RobertRipoll\Exceptions\InvalidJsonException;
 
 class WhatsAppWebhook
 {
-	private const WHATSAPP_OBJECT = 'whatsapp_business_account';
-	private const WHATSAPP_PRODUCT = 'whatsapp';
+	private const OBJECT_TYPE = 'whatsapp_business_account';
+	private const MESSAGING_PRODUCT = 'whatsapp';
 
-	private Collection $payload;
+	private string $verifyToken;
 	private WhatsAppCloudApi $whatsApp;
 	private EventDispatcherInterface $eventDispatcher;
 
-	public function __construct(string $phoneNumberId, string $accessToken, ?EventDispatcherInterface $eventDispatcher = null)
+	public function __construct(string $verifyToken, array $whatsAppConfig, EventDispatcherInterface $eventDispatcher)
 	{
-		$this->whatsApp = new WhatsAppCloudApi(['from_phone_number_id' => $phoneNumberId, 'access_token' => $accessToken]);
-		$this->eventDispatcher = $eventDispatcher ?? new EventDispatcher();
+		$this->verifyToken = $verifyToken;
+		$this->whatsApp = new WhatsAppCloudApi($whatsAppConfig);
+		$this->eventDispatcher = $eventDispatcher;
 	}
 
-	private function load(): bool
+	public function getWhatsApp(): WhatsAppCloudApi
 	{
-		$payload = Collection::make($_POST);
-
-		if ($payload->get('object') != self::WHATSAPP_OBJECT) {
-			return false;
-		}
-
-		$payload = Collection::make($payload->get('entry'))->first;
-
-		if (!$payload || $payload->get('id') != $this->whatsApp->fromPhoneNumberId()) {
-			return false;
-		}
-
-		$change = Collection::make($payload->get('changes'))->first;
-
-		if (!$change) {
-			return false;
-		}
-
-		$payload = Collection::make($change);
-
-		if (!$payload || $payload->get('messaging_product') != self::WHATSAPP_PRODUCT) {
-			return false;
-		}
-
-		$this->payload = $payload;
-
-		return true;
+		return $this->whatsApp;
 	}
 
-	public function addListener(string $eventName, callable $callback): void
+	public function verify(RequestInterface $message): ?string
 	{
-		$this->eventDispatcher->addListener($eventName, $callback);
+		$queryParams = [];
+		parse_str(parse_url($message->getUri()->getQuery(), PHP_URL_QUERY), $queryParams);
+
+		$queryParams = new Collection($queryParams);
+
+		$mode = $queryParams->get('hub.mode');
+		$token = $queryParams->get('hub.verify_token');
+		$challenge = $queryParams->get('hub.challenge');
+
+		if (!$mode || !$token) {
+			return null;
+		}
+
+		if ($mode != 'subscribe' || $token != $this->verifyToken) {
+			return null;
+		}
+
+		return $challenge;
 	}
 
-	private function isIncomingMessagePayload(): bool
+	private function getBody(RequestInterface $message): array
 	{
-		$payload = $this->payload;
+		$body = json_decode((string)$message->getBody(), JSON_THROW_ON_ERROR);
 
+		if ($body === null) {
+			throw new InvalidJsonException();
+		}
+
+		return $body;
+	}
+
+	private function getPayload(array $body): ?Collection
+	{
+		$data = new Collection($body);
+
+		if ($data->get('object') != self::OBJECT_TYPE) {
+			return null;
+		}
+
+		$entry = new Collection($data->get('entry'));
+		$change = (new Collection($entry->get('changes')))->first;
+		$payload = new Collection($change->get('value'));
+
+		if ($payload->get('messaging_product') != self::MESSAGING_PRODUCT) {
+			return null;
+		}
+
+		$metadata = new Collection($payload->get('metadata'));
+
+		if ($metadata->get('phone_number_id') != $this->whatsApp->fromPhoneNumberId()) {
+			return null;
+		}
+
+		return $payload;
+	}
+
+	private function isMessageReceivedPayload(Collection $payload): bool
+	{
 		return $payload->has('messages') && $payload->get('messages');
 	}
 
-	private function getSender(): ?Sender
+	private function getReceivedMessageSender(Collection $data): Sender
 	{
-		$metadata = Collection::make($this->payload->get('metadata'));
-		$contact = Collection::make($this->payload->get('contacts'))->first;
+		$contact = (new Collection($data->get('contacts')))->first;
+		$profile = new Collection($contact->get('profile'));
+		$username = $profile->get('name');
 
-		if (!$metadata || !$contact) {
-			return null;
-		}
+		$phoneNumber = $data->get('from');
 
-		$profile = Collection::make($contact->get('profile'));
-
-		if (!$profile) {
-			return null;
-		}
-
-		return new Sender($contact->get('wa_id'), $metadata->get('display_phone_number'), $profile->get('display_phone_number'));
+		return new Sender('', $phoneNumber, $username);
 	}
 
-	private function getMessage(): Message
+	private function getReceivedMessage(Collection $payload): ?Message
 	{
-		$message = null;
+		$data = new Collection($payload->get('messages'));
+		$data = new Collection($data->first);
 
-		$payload = Collection::make(Collection::make($this->payload->get('messages'))->first);
+		$sender = $this->getReceivedMessageSender($data);
+
+		$message = null;
 		$messageType = $payload->get('type');
 
-		if ($messageType == TextMessage::getType()) {
-			$message = new TextMessage('Hello world');
+		if ($messageType == TextMessage::getType())
+		{
+			$body = (new Collection($data->get($messageType)))->get('body');
+			$message = new TextMessage($body, '', $sender);
+		}
+
+		elseif ($message == ButtonMessage::getType())
+		{
+			$button = new Collection($data->get($messageType));
+			$message = new ButtonMessage($button->get('text'), $button->get('payload'), '', $sender);
 		}
 
 		return $message;
 	}
 
-	private function dispatch(Event $event): void
+	private function emitReceivedMessageEvent(Message $message): void
 	{
-		$this->eventDispatcher->dispatch($event, get_class($event));
-	}
-
-	private function processIncomingMessage(): bool
-	{
-		$sender = $this->getSender();
-		$message = $this->getMessage();
-
 		if ($message instanceof TextMessage) {
-			$this->dispatch(new TextMessageReceivedEvent($message, $sender, $this));
+			$this->eventDispatcher->dispatch(new TextMessageReceivedEvent($message, $message->getSender()));
 		}
 
-		return true;
+		elseif ($message instanceof ButtonMessage) {
+			$this->eventDispatcher->dispatch(new ButtonMessageReceivedEvent($message, $message->getSender()));
+		}
 	}
 
-	private function isMessageStatusChangePayload(): bool
+	private function isMessageStatusChangedPayload(Collection $payload): bool
 	{
-		$payload = $this->payload;
-
 		return $payload->has('statuses') && $payload->get('statuses');
 	}
 
-	private function processMessageStatusChange(): bool
+	private function emitMessageStatusChangedEvent(Collection $payload): void
 	{
-		$payload = $this->payload;
+		$data = (new Collection($payload->get('statuses')))->first;
+		$status = (new Collection($data))->get('status');
 
-		$data = Collection::make($payload->get('statuses'))->first;
-		$status = $data->get('status');
+		$messageId = $data->get('id');
+		$timestamp = DateTime::createFromFormat('U', $data->get('timestamp')) ?: null;
 
-		if ($status == 'delivered') {
-			$this->dispatch(new MessageDeliveredEvent($this));
+		switch ($status)
+		{
+			case 'sent':
+				$this->eventDispatcher->dispatch(new MessageSentEvent($messageId, $timestamp));
+				break;
+
+			case 'delivered':
+				$this->eventDispatcher->dispatch(new MessageDeliveredEvent($messageId, $timestamp));
+				break;
+
+			case 'read':
+				$this->eventDispatcher->dispatch(new MessageReadEvent($messageId, $timestamp));
+				break;
 		}
-
-		elseif ($status == 'read') {
-			$this->dispatch(new MessageReadEvent($this));
-		}
-
-		else {
-			return false;
-		}
-
-		return true;
 	}
 
-	private function execute(): bool
+	private function processPayload(Collection $payload): void
 	{
-		if ($this->isIncomingMessagePayload()) {
-			return $this->processIncomingMessage();
+		if ($this->isMessageReceivedPayload($payload))
+		{
+			$message = $this->getReceivedMessage($payload);
+			$this->emitReceivedMessageEvent($message);
 		}
 
-		if ($this->isMessageStatusChangePayload()) {
-			return $this->processMessageStatusChange();
+		elseif ($this->isMessageStatusChangedPayload($payload)) {
+			$this->emitMessageStatusChangedEvent($payload);
 		}
-
-		return false;
-	}
-
-	public function process(): void
-	{
-		if (!$this->load()) {
-			return;
-		}
-
-		$this->execute();
-	}
-
-	private function sendTextMessage(User $recipient, TextMessage $message): Response
-	{
-		return $this->whatsApp->sendTextMessage($recipient->getPhoneNumber(), $message->getText());
-	}
-
-	private function sendTemplate(User $recipient, Template $template): Response
-	{
-		if ($template->hasComponents()) {
-			$netflieComponent = new Component([], $template->getComponents()->toArray(), []);
-		}
-
-		else {
-			$netflieComponent = null;
-		}
-
-		return $this->whatsApp->sendTemplate($recipient->getPhoneNumber(), $template->getName(), $template->getLanguage(), $netflieComponent);
 	}
 
 	/**
-	 * @throws ResponseException
+	 * @throws InvalidJsonException
 	 */
-	public function send(User $recipient, Message $message): void
+	public function process(RequestInterface $message)
 	{
-		if ($message instanceof TextMessage) {
-			$response = $this->sendTextMessage($recipient, $message);
+		if ($message->getMethod() !== 'POST') {
+			return;
 		}
 
-		elseif ($message instanceof Template) {
-			$response = $this->sendTemplate($recipient, $message);
+		if (!$payload = $this->getPayload($this->getBody($message))) {
+			return;
 		}
 
-		else {
-			throw new InvalidArgumentException('Unsupported message type');
-		}
-
-		if ($response->isError() || $response->httpStatusCode() != 200) {
-			$response->throwException();
-		}
+		$this->processPayload($payload);
 	}
 }
